@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import json
 import sqlite3
+import time
 from dataclasses import asdict, is_dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -18,25 +19,45 @@ class SummaryCache:
         """
         self._path = path
         self._path.parent.mkdir(parents=True, exist_ok=True)
-        self._ensure_schema()
+        self._schema_ready = False
 
     def _connect(self) -> sqlite3.Connection:
-        """Open a new SQLite connection to the configured cache file."""
-        return sqlite3.connect(self._path)
+        """Open a tuned SQLite connection to the configured cache file."""
+        conn = sqlite3.connect(self._path, timeout=30)
+        # Improve lock tolerance on shared infra and concurrent readers/writers.
+        conn.execute("PRAGMA busy_timeout = 30000")
+        conn.execute("PRAGMA journal_mode = WAL")
+        return conn
 
     def _ensure_schema(self) -> None:
         """Create the cache table if it does not already exist."""
-        with self._connect() as conn:
-            conn.execute(
-                """
-                CREATE TABLE IF NOT EXISTS summary_cache (
-                    cache_key TEXT PRIMARY KEY,
-                    payload TEXT NOT NULL,
-                    created_at TEXT NOT NULL
-                )
-                """
-            )
-            conn.commit()
+        if self._schema_ready:
+            return
+
+        last_error: Exception | None = None
+        for attempt in range(3):
+            try:
+                with self._connect() as conn:
+                    conn.execute(
+                        """
+                        CREATE TABLE IF NOT EXISTS summary_cache (
+                            cache_key TEXT PRIMARY KEY,
+                            payload TEXT NOT NULL,
+                            created_at TEXT NOT NULL
+                        )
+                        """
+                    )
+                    conn.commit()
+                self._schema_ready = True
+                return
+            except sqlite3.OperationalError as exc:
+                last_error = exc
+                if "locked" not in str(exc).lower() or attempt >= 2:
+                    raise
+                time.sleep(0.5 * (attempt + 1))
+
+        if last_error is not None:
+            raise last_error
 
     def make_key(self, *, approach: str, target_id: str, model: str, data_fingerprint: str) -> str:
         """Build a deterministic cache key from request identity fields.
@@ -62,6 +83,7 @@ class SummaryCache:
         Output:
             Parsed payload dictionary, or `None` when cache miss/invalid JSON.
         """
+        self._ensure_schema()
         with self._connect() as conn:
             row = conn.execute(
                 "SELECT payload FROM summary_cache WHERE cache_key = ?",
@@ -87,6 +109,7 @@ class SummaryCache:
             cache_key: Stable key from `make_key`.
             payload: Serializable object or dataclass graph.
         """
+        self._ensure_schema()
         encoded = json.dumps(_to_serializable(payload), ensure_ascii=True)
         created_at = datetime.now(timezone.utc).isoformat()
 
