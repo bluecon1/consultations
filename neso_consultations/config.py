@@ -25,6 +25,7 @@ class Settings:
     azure_openai_deployment: str
     azure_openai_api_key: str
     azure_openai_use_aad: bool
+    azure_openai_managed_identity_client_id: str
     azure_openai_token_scope: str
     llm_timeout_seconds: int
     llm_max_retries: int
@@ -75,6 +76,9 @@ class Settings:
             azure_openai_deployment=os.getenv("AZURE_OPENAI_DEPLOYMENT", "").strip(),
             azure_openai_api_key=os.getenv("AZURE_OPENAI_API_KEY", "").strip(),
             azure_openai_use_aad=(os.getenv("AZURE_OPENAI_USE_AAD", "false").strip().lower() == "true"),
+            azure_openai_managed_identity_client_id=os.getenv(
+                "AZURE_OPENAI_MANAGED_IDENTITY_CLIENT_ID", ""
+            ).strip(),
             azure_openai_token_scope=os.getenv(
                 "AZURE_OPENAI_TOKEN_SCOPE", "https://cognitiveservices.azure.com/.default"
             ).strip(),

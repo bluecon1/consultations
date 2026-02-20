@@ -22,6 +22,7 @@ def _settings(*, llm_provider: str) -> Settings:
         azure_openai_deployment="gpt-4.1-mini",
         azure_openai_api_key="test",
         azure_openai_use_aad=False,
+        azure_openai_managed_identity_client_id="",
         azure_openai_token_scope="https://cognitiveservices.azure.com/.default",
         llm_timeout_seconds=60,
         llm_max_retries=1,

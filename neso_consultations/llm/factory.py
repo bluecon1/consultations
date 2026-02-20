@@ -42,6 +42,7 @@ def build_llm_provider(settings: Settings, *, require_llm: bool = True) -> LLMPr
             api_version=settings.azure_openai_api_version,
             api_key=settings.azure_openai_api_key,
             use_aad=settings.azure_openai_use_aad,
+            managed_identity_client_id=settings.azure_openai_managed_identity_client_id,
             token_scope=settings.azure_openai_token_scope,
             timeout_seconds=settings.llm_timeout_seconds,
             max_retries=settings.llm_max_retries,

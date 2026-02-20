@@ -64,6 +64,14 @@ Set `LLM_PROVIDER` in `.env`:
   - `AZURE_OPENAI_API_VERSION=2024-06-01`
   - auth option 1: `AZURE_OPENAI_API_KEY=...`
   - auth option 2: `AZURE_OPENAI_USE_AAD=true` (uses `DefaultAzureCredential`)
+  - optional for user-assigned MI: `AZURE_OPENAI_MANAGED_IDENTITY_CLIENT_ID=<client_id>`
+
+Legacy Azure variable mapping:
+
+- old `AZURE_OPENAI_ENDPOINT` -> new `AZURE_OPENAI_ENDPOINT`
+- old `API_VERSION` -> new `AZURE_OPENAI_API_VERSION`
+- old `DEPLOYMENT_NAME` -> new `AZURE_OPENAI_DEPLOYMENT`
+- old `DefaultAzureCredential(managed_identity_client_id=...)` -> set `AZURE_OPENAI_USE_AAD=true` and `AZURE_OPENAI_MANAGED_IDENTITY_CLIENT_ID=...`
 
 ## Run
 

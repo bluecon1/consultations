@@ -18,6 +18,7 @@ class AzureOpenAIProvider(LLMProvider):
         api_version: str,
         api_key: str = "",
         use_aad: bool = False,
+        managed_identity_client_id: str = "",
         token_scope: str = "https://cognitiveservices.azure.com/.default",
         timeout_seconds: int = 300,
         max_retries: int = 2,
@@ -30,6 +31,8 @@ class AzureOpenAIProvider(LLMProvider):
             api_version: API version query parameter.
             api_key: API key (used when `use_aad=False`).
             use_aad: If true, uses `DefaultAzureCredential` for bearer tokens.
+            managed_identity_client_id: Optional client ID for user-assigned
+                managed identity when using AAD auth.
             token_scope: OAuth scope for Azure OpenAI.
             timeout_seconds: Request timeout per attempt.
             max_retries: Retry attempts for transient failures.
@@ -48,6 +51,7 @@ class AzureOpenAIProvider(LLMProvider):
         self._api_version = api_version
         self._api_key = api_key
         self._use_aad = use_aad
+        self._managed_identity_client_id = managed_identity_client_id
         self._token_scope = token_scope
         self._timeout_seconds = max(30, int(timeout_seconds))
         self._max_retries = max(0, int(max_retries))
@@ -149,7 +153,12 @@ class AzureOpenAIProvider(LLMProvider):
                 "azure-identity is required for AAD auth. Install it or use API key auth."
             ) from exc
 
-        credential = DefaultAzureCredential()
+        if self._managed_identity_client_id:
+            credential = DefaultAzureCredential(
+                managed_identity_client_id=self._managed_identity_client_id
+            )
+        else:
+            credential = DefaultAzureCredential()
         token = credential.get_token(self._token_scope)
         return token.token
 
