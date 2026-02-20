@@ -98,7 +98,8 @@ class ConsultationService:
         catalog = get_organisation_catalog(data, response_id)
         result = summarise_organisation(llm=self._llm, settings=self._settings, catalog=catalog)
 
-        self._cache.set(cache_key, dataclass_to_dict(result))
+        if use_cache:
+            self._cache.set(cache_key, dataclass_to_dict(result))
         return result
 
     def summarise_question(self, *, question_id: str, use_cache: bool = True) -> QuestionSummaryResult:
@@ -134,7 +135,8 @@ class ConsultationService:
             total_organisations=total_organisations,
         )
 
-        self._cache.set(cache_key, dataclass_to_dict(result))
+        if use_cache:
+            self._cache.set(cache_key, dataclass_to_dict(result))
         return result
 
     @staticmethod
