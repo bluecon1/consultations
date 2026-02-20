@@ -1,0 +1,220 @@
+This document describes a step-by-step architecture for handling summarisation of Excel-based responses. It assumes responses are stored in a normalized database table. All content is written in plain text only. No JSON, code blocks, or technical notation are used.
+
+==================================================
+Approach 1: Row-level (Organisation-centric) — Hybrid (Option 1C)
+
+Purpose
+Provide a stable, cached baseline summary per organisation plus on-demand focused summaries (for example by section, by topic, or uncommon concerns).
+
+Step 1.1: Build Organisation Catalog
+
+Description
+Assemble all responses provided by a single organisation into a structured catalog that will be reused for section summaries and the final organisation-level summary.
+
+Organisation Details
+Organisation ID: ORG_001
+Organisation Name: Example Org
+Organisation Type: Local authority
+
+Geography
+Nation or Region: Greater London
+
+Response Coverage
+Answered questions: 42
+Total questions: 55
+
+Response Items (repeated for each question)
+Record ID: uuid
+Question ID: GOV_01
+Question Text: Do you agree …?
+Answer Type: Likert or free text
+Answer Text: Somewhat agree because …
+Likert Value: somewhat_agree
+
+Step 1.2: Section Summaries
+
+Description
+Summarise responses section by section so that nuance is preserved and long responses do not overwhelm the summarisation process.
+
+Inputs
+Run ID: RUN_…
+Organisation ID: ORG_001
+Section Name: Governance
+
+Section Responses (repeated)
+Record ID
+Question ID
+Question Text
+Answer Text
+Likert Value (if applicable)
+
+Outputs
+Organisation ID: ORG_001
+Section Name: Governance
+
+Section Summary
+Main points: list of key supporting statements
+Concerns: list of issues or risks raised
+Asks: list of recommendations or requests
+Nuances or minor points: less common or conditional views
+
+Coverage
+Number of records summarised: 8
+Total records in section: 9
+
+Step 1.3: Standard Organisation Summary
+
+Description
+Combine all section summaries into a single, stable organisation-level summary that serves as the default view for most users.
+
+Inputs
+Run ID: RUN_…
+Organisation ID: ORG_001
+All section summaries for the organisation
+
+Outputs
+Organisation
+Organisation ID: ORG_001
+Organisation Name: Example Org
+Organisation Type: Local authority
+
+Overall stance
+Supportive, mixed, or concerned
+
+Summary Content
+Key supports: list of main positive points
+Key concerns: list of main concerns or risks
+Asks or recommendations: list of requested changes or actions
+
+Coverage
+Answered questions: 42
+Total questions: 55
+Sections covered: 12
+
+==================================================
+Approach 2: Column-level (Question-centric)
+
+Purpose
+For each question, summarise what all organisations said. Outputs separate numeric distributions, mainstream arguments, minority or edge arguments, and supporting evidence.
+
+Step 2.1: Build Question Slice
+
+Description
+Retrieve all responses for a single question across all organisations.
+
+Question Details
+Question ID: GOV_01
+Section: Governance
+Question Text: Do you agree …?
+
+Responses (repeated)
+Record ID: uuid
+Organisation ID: ORG_001
+Organisation Type: Local authority
+Nation or Region: Greater London
+Answer Text: …
+Likert Value: somewhat_agree
+
+Response Counts
+Total responses: 100
+Responses with Likert scale: 92
+Free-text only responses: 8
+
+Step 2.2: Quantitative Distribution
+
+Description
+Calculate numeric distributions for structured responses such as agree or disagree.
+
+Distribution Summary
+Question ID: GOV_01
+Responses included in distribution: 92
+
+Agreement Breakdown
+Strongly agree: 12.0 percent
+Somewhat agree: 44.6 percent
+Neutral: 18.5 percent
+Somewhat disagree: 16.3 percent
+Strongly disagree: 8.6 percent
+
+Step 2.3: Argument Extraction, Clustering, and Minority Capture
+
+Description
+Identify and organise distinct arguments expressed in response to the question, while ensuring that rare but important viewpoints are preserved.
+
+Step 2.3a: Claim Extraction
+
+Inputs
+Question ID: GOV_01
+Responses containing record ID, organisation ID, answer text, and any structured fields
+
+Processing
+Each response is split into one to three atomic claims. Conditional or qualified statements are treated as separate claims.
+
+Outputs (per claim)
+Claim ID
+Source record ID
+Organisation ID
+Claim text
+Stance (support, concern, conditional, or neutral)
+Salience flags if applicable
+
+Step 2.3b: Claim Clustering
+
+Description
+Group genuinely similar claims into mainstream argument clusters.
+
+Outputs
+Main argument clusters (repeated)
+Cluster ID
+Cluster label describing the argument
+Stance
+Member claim IDs
+Member count
+Evidence excerpts with record references
+
+Unassigned claims list
+
+Step 2.3c: Minority and Outlier Capture
+
+Description
+Promote distinct, high-impact unassigned claims into minority clusters so they are explicitly visible.
+
+Outputs
+Minority argument clusters (repeated)
+Cluster ID
+Cluster label
+Member claim IDs
+Member count
+Explanation of why the view matters
+Evidence excerpts
+
+Step 2.3d: Coverage Summary
+
+Description
+Provide transparency on how claims were handled.
+
+Coverage Summary
+Total claims extracted
+Claims in mainstream clusters
+Claims in minority clusters
+Unassigned low-salience claims
+
+Step 2.4: Question Summary Generation
+
+Description
+Generate a balanced narrative summary that combines numeric distribution, mainstream arguments, minority views, and evidence.
+
+Outputs
+Question ID: GOV_01
+Section: Governance
+
+Summary Elements
+Headline sentence
+Narrative summary paragraph
+Majority view list
+Minority or edge view list
+Key arguments for
+Key arguments against
+Distribution summary
+Notable evidence excerpts
+Evidence index

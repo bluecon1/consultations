@@ -1,0 +1,395 @@
+import json
+from collections import defaultdict
+from typing import Dict, List, Any
+
+import pandas as pd
+import tiktoken
+from sentence_transformers import SentenceTransformer
+from sklearn.metrics.pairwise import cosine_similarity
+import numpy as np
+from tqdm import tqdm
+import yaml
+
+from sep_index_builder.load_file_utils import (
+    load_documents_from_storage_account,
+)
+from sep_index_builder.utils import (
+    clean_csv_doc,
+    chunk_consultation_responses,
+    initialize_index_client,
+    create_search_index,
+    initialize_azure_openai_client,
+    get_embedding,
+    count_tokens,
+    get_consultation_name,
+)
+print(1)
+
+# pip install openai azure-identity
+from openai import AzureOpenAI
+from azure.identity import DefaultAzureCredential, get_bearer_token_provider
+
+# Required settings
+AZURE_OPENAI_ENDPOINT = "https://aae-fof-uks-aaecsnp-oai-01.openai.azure.com"
+API_VERSION = "2024-06-01"
+DEPLOYMENT_NAME = "gpt-4o"  # or your deployment’s name
+
+# In Azure with a user-assigned MI:
+# credential = DefaultAzureCredential(managed_identity_client_id="<MI_CLIENT_ID>")
+credential = DefaultAzureCredential()
+
+def load_yaml(filepath: str):
+    absolute_path = os.path.abspath(filepath)
+    try:
+        with open(absolute_path, "r") as file:
+            config = yaml.safe_load(file)
+    except FileNotFoundError:
+        raise FileNotFoundError(f"The file '{absolute_path}' does not exist.")
+    except yaml.YAMLError as exc:
+        raise ValueError(f"Error parsing YAML file '{absolute_path}': {exc}")
+    return config
+
+def load_nested_yaml(config_value):
+    """
+    Checks if the config_value is a path the a yaml file and loads the data from yaml file
+    """
+    if isinstance(config_value, str) and (
+        config_value.endswith(".yaml") or config_value.endswith(".yml")
+    ):
+        jupyter_config_value = "../Repos/SSET_dashboard" + config_value[2:]
+        return load_yaml(jupyter_config_value)
+    else:
+        return config_value
+
+def load_configuration(filepath: str) -> Dict[str, Any]:
+    """
+    Loads the configuration from the yaml file and any nested yaml files in the consultation_config section
+    """
+    config = load_yaml(filepath)
+    if isinstance(config, dict) and "consultation_config" in config:
+        if isinstance(config["consultation_config"], dict):
+            for key, value in config["consultation_config"].items():
+                config["consultation_config"][key] = load_nested_yaml(value)
+            if "additional_field_mappings" in config["consultation_config"]:
+                if isinstance(
+                    config["consultation_config"]["additional_field_mappings"], dict
+                ):
+                    for key, value in config["consultation_config"][
+                        "additional_field_mappings"
+                    ].items():
+                        config["consultation_config"]["additional_field_mappings"][
+                            key
+                        ] = load_nested_yaml(value)
+            if "additional_column_mappings" in config["consultation_config"]:
+                for new_col_dict in config["consultation_config"][
+                    "additional_column_mappings"
+                ]:
+                    if isinstance(
+                        config["consultation_config"]["additional_column_mappings"][
+                            new_col_dict
+                        ],
+                        dict,
+                    ):
+                        for key, value in config["consultation_config"][
+                            "additional_column_mappings"
+                        ][new_col_dict].items():
+                            config["consultation_config"]["additional_column_mappings"][
+                                new_col_dict
+                            ][key] = load_nested_yaml(value)
+    return config
+config = load_configuration(filepath)
+document_storage_metadata = config["document_storage_metadata"]
+consultation_config = config["consultation_config"]
+text_splitter_config = config["text_splitter_config"]
+azure_openai_config = config["azure_openai_config"]
+azure_ai_search_config = config["azure_ai_search_config"]
+
+if not isinstance(document_storage_metadata, list):
+    document_storage_metadata = [document_storage_metadata]
+
+# Load documents
+docs = []
+for document_storage in document_storage_metadata:
+    docs.extend(
+        load_documents_from_storage_account(
+            credential=credential, **document_storage
+        )
+    )
+
+n_docs = len(docs)
+df_raw = docs[0]["document_content"]
+for doc in tqdm(docs, desc="Cleaning documents", total=n_docs):
+    try:
+        cleaned_doc = clean_csv_doc(doc["document_content"], consultation_config)
+        doc.update({"cleaned": cleaned_doc})
+    except Exception as e:
+        logging.error(f"Failed to clean document {doc.get('file_name', '')}: {e}")
+        doc["cleaned"] = []
+df = docs[0]["cleaned"]
+categorical_columns = [
+"1. Do you agree that in Scotland and Wales the strategic plans outlined in this methodology should be known as the Scotland RESP and Wales RESP respectively?",
+"Do you agree with our approach to engagement as we develop the RESPs?",
+"Do you agree with the approach we have outlined on local actor support, and how we have phased the delivery?",
+"Do you agree that local authorities should be able to decide whether to send a political representative or officer to the strategic board?",
+"Do you agree with our proposed voting structure for strategic boards?",
+"Do you feel any changes should be made to the proposed terms of reference?",
+"Do you agree with our proposals for appointing members of the strategic boards?",
+"Do you agree with our proposed design for working groups?",
+"Do you agree with the proposed representation for the GB Steering Committee?",
+"Do you agree that we should not be making major changes to the RESP methodology within cycle?",
+"Do you agree with the approach for the Nations and Regions Contexts?",
+"Do you agree with the scope of 'Whole Energy' for RESP Outputs?",
+"Do you agree with the approach for the RESP Pathways?",
+"Do you agree with our prioritisation approach and criteria set out to evaluate the validity of the Consistent Planning Assumptions values?",
+"Do you agree with our approach for the Consistent Planning Assumptions?",
+"Our preferred approach is to move the RESP delivery dates back to enable option 2 (page 78). Do you support this approach and are there any other wider factors we should consider? - Selected Choice",
+"Do you agree with our proposed approach for the Spatial Context?",
+"Do you agree with our description of the three types of complexity and the examples indicated?",
+"Do you support the selection of Option 2 (page 156) as delivering best value in assuring alignment?",
+"Do you agree with our approach to societal considerations?",
+"Do you agree with our proposed environmental approach?"
+]
+
+text_columns = [
+"1. Do you agree that in Scotland and Wales the strategic plans outlined in this methodology should be known as the Scotland RESP and Wales RESP respectively? If not, what alternative should be used?",
+"Do you agree with our approach to engagement as we develop the RESPs? Please provide your reasoning?",
+"Do you agree with the approach we have outlined on local actor support, and how we have phased the delivery? Please provide your reasoning?",
+"Do you agree that local authorities should be able to decide whether to send a political representative or officer to the strategic board? Please provide your reasoning?",
+"Do you agree with our proposed voting structure for strategic boards? If you think we should change it, please provide your reasoning?",
+"Do you feel any changes should be made to the proposed terms of reference? Please provide us the details?",
+"Do you agree with our proposals for appointing members of the strategic boards? If you think we should change it, please provide your reasoning?",
+"Do you agree with our proposed design for working groups? If not, what changes would you propose and why?",
+"Do you agree with the proposed representation for the GB Steering Committee? If not, are there other participants you feel we should consider?",
+"Do you agree that we should not be making major changes to the RESP methodology within cycle? If not, please can you give examples of circumstances where you think this may be necessary?",
+"Do you agree with the approach for the Nations and Regions Contexts? Please provide your reasoning?",
+"How do you envisage using the Nations and Regions Contexts and what would make the output work best for your needs?",
+"How do you envisage using the RESP Pathways and how can we communicate pathways to support you to use them effectively?",
+"Do you agree with the approach for the RESP Pathways? If not, please provide your reasoning?",
+"Do you agree with our prioritisation approach and criteria set out to evaluate the validity of the Consistent Planning Assumptions values? Please provide your reasoning?",
+"Do you agree with our approach for the Consistent Planning Assumptions? Please provide your reasoning?",
+"Our preferred approach is to move the RESP delivery dates back to enable option 2 (page 78). Do you support this approach and are there any other wider factors we should consider? - Yes - Text",
+"Our preferred approach is to move the RESP delivery dates back to enable option 2 (page 78). Do you support this approach and are there any other wider factors we should consider? - Maybe - Text",
+"Our preferred approach is to move the RESP delivery dates back to enable option 2 (page 78). Do you support this approach and are there any other wider factors we should consider? - No - Text",
+"Do you agree with our proposed approach for the Spatial Context? Please provide your reasoning?",
+"How do you envisage using the Spatial Context and how can we communicate these outputs to support you to use it effectively?",
+"What additional considerations should we take to categorise complex strategic energy needs? Please provide your reasoning.",
+"What further considerations should we take as we develop the approach for specifying and categorising Strategic Investment Needs to ensure consistent regulatory treatment of network investments? Please provide your reasoning.",
+"What examples of whole system optimisation opportunities are you aware of and what considerations should we take to identify, prioritise and develop these collaboratively with you?",
+"Do you support the selection of Option 2 (page 156) as delivering best value in assuring alignment? If not, please provide your reasoning.",
+"What further considerations should we take as we develop the approach to Network Planning Assurance for gas distribution networks? Please provide your reasoning",
+"What additional considerations should we make on PSED as we develop the RESPs? Please provide your reasoning.",
+"Do you agree with our proposed environmental approach? Please provide your reasoning if you think we should be doing this differently?",
+"Do you have any observations or suggestions on our proposed approach to managing RESP data?",
+"How frequently do you believe data refreshes should occur to ensure the RESP remains accurate and useful? What criteria should trigger a data refresh? Please provide your reasoning.",
+"Will commercial sensitivities discourage you or other stakeholders from contributing to the in-development register?",
+"What measures could help build confidence in sharing information?",
+"Overall, do you agree with the approaches proposed across the RESP methodology? Are there any elements of the methodology that you would like to see in more detail?"
+]
+
+
+# The scope for Azure OpenAI
+token_provider = get_bearer_token_provider(
+    credential, "https://cognitiveservices.azure.com/.default"
+)
+
+client = AzureOpenAI(
+    azure_endpoint=AZURE_OPENAI_ENDPOINT,
+    api_version=API_VERSION,
+    azure_ad_token_provider=token_provider,  # keyless auth
+)
+def count_tokens(input_string: str, encoding_name: str):
+    """
+    Count the number of tokens in a string using the specified encoding.
+    Args:
+        input_string: The text to tokenize.
+        encoding_name: The encoding name (e.g., 'cl100k_base').
+    Returns:
+        Number of tokens (int).
+    """
+    tokenizer = tiktoken.get_encoding(encoding_name)
+    tokens = tokenizer.encode(input_string)
+    return len(tokens)
+
+def col_to_resp_string(df, col):
+    non_nan_entries = df[col].dropna().tolist()
+    responses = ' '.join(non_nan_entries)
+    return responses
+
+def build_key_point_instructions(question_to_analyse, responses_to_analyse):
+    instructions = f"Please list the points raised in the response as bullet points. Do not nest the bullet points. Do not include any additional information, introductory text or analysis. Your response should be purely a list of key points. The question being responded to is {question_to_analyse}. The responses are {responses_to_analyse}"
+    return instructions
+
+def build_key_point_reduction_instructions(key_points):
+    instructions = f"Please reduce the following list to remove any duplicated information. Do not include any additional information, introductory text or analysis. Your response should be purely a list of key points. List: {key_points}"
+    return instructions
+
+def run_llm(instructions, temperature):
+    resp = client.chat.completions.create(
+        model=DEPLOYMENT_NAME,   # model = your Azure deployment name
+        messages=[{"role": "user", "content": instructions}],
+        temperature=temperature
+    )
+    return resp.choices[0].message.content
+
+def find_key_points(question_to_analyse, responses_to_analyse, temperature):
+    kp_instructions = build_key_point_instructions(question_to_analyse, responses_to_analyse)
+    key_points = run_llm(kp_instructions, temperature)
+    return key_points
+
+def find_reduced_key_points(key_points, temperature):
+    rkp_instuctions = build_key_point_reduction_instructions(key_points)
+    reduced_key_points = run_llm(rkp_instuctions, temperature)
+    return reduced_key_points
+def convert_string_list_to_list(string_list: str) -> List:
+    """
+    Converts a string list to a python list
+    
+    Expects a list of the form 
+    "- A. \n- B. \n- C. \n- D." and will return ["A.", "B.", "C.", "D."] 
+    """
+    # Try to get string_list into a consistent form
+    string_list = string_list.replace('\n\n','\n')
+    string_list = string_list.replace('  \n','\n')
+    string_list = string_list.replace(' \n','\n')
+    python_list = string_list.split('\n- ')
+    python_list[0] = string_list[0].lstrip('- ').strip()
+    python_list[-1] = string_list[-1].strip('  ').strip()
+    python_list = [string for string in python_list if string]
+    return python_list
+def build_theme_clusters(all_points_embedding, reduced_points_embedding, col_rkps_list) -> Dict:
+    """
+    Builds theme clusters for the reduced key points lists and counts number of points in each cluster
+
+    Intended to give a count of each time a point was raised 
+    """
+    similarity_matrix = cosine_similarity(all_points_embedding, reduced_points_embedding)
+    assigned_themes = np.argmax(similarity_matrix, axis=1)
+    similarity_scores = np.max(similarity_matrix, axis=1)
+    
+    theme_clusters = defaultdict(list)
+    for point, theme_idx, score in zip(all_points_embedding, assigned_themes, similarity_scores):
+        theme_clusters[theme_idx].append({'point': point,
+                                          'similarity': score})
+    
+    sorted_themes = sorted(theme_clusters.items(), 
+                           key=lambda x: len(x[1]), 
+                           reverse=True)
+    
+    theme_text_cluster = {}
+    for theme_idx, points_data in sorted_themes:
+        theme_text_cluster[col_rkps_list[theme_idx]] = len(points_data)
+    return theme_text_cluster
+key_points = []
+reduced_kp = []
+col_tokens = []
+kp_tokens = []
+rkp_tokens = []
+encoding = 'cl100k_base'
+temperature = 0.5
+model = SentenceTransformer('all-MiniLM-L6-v2')
+
+consultation_key_points = {}
+for col  in text_columns:
+    responses = col_to_resp_string(df, col)
+    col_tokens.append(count_tokens(responses, encoding_name=encoding))
+    col_kps = find_key_points(col, responses, temperature)
+    key_points.append(col_kps)
+    kp_tokens.append(count_tokens(col_kps, encoding_name=encoding))
+    col_rkps = find_reduced_key_points(col_kps, temperature)
+    reduced_kp.append(col_rkps)
+    rkp_tokens.append(count_tokens(col_rkps, encoding_name=encoding))  
+    col_pts_list = convert_string_list_to_list(col_kps)
+    col_rkps_list = convert_string_list_to_list(col_rkps)
+    
+    # Vectorise points lists
+    all_points_embedding = model.encode(col_pts_list, show_progress_bar=True)
+    reduced_points_embedding = model.encode(col_rkps_list)
+
+    theme_text_cluster = build_theme_clusters(all_points_embedding, reduced_points_embedding, col_rkps_list)
+    consultation_key_points[col] = theme_text_cluster
+value_counts = df['organisation'].value_counts()
+
+# Convert the Series to a DataFrame for sorting
+value_counts_df = value_counts.reset_index()
+
+# Rename the columns for clarity
+value_counts_df.columns = ['Value', 'Count']
+
+# Sort the DataFrame by the 'Count' column in descending order
+sorted_value_counts_df = value_counts_df.sort_values(by='Count', ascending=False)
+
+# Print the sorted DataFrame
+print(sorted_value_counts_df)
+sorted_value_counts_df[sorted_value_counts_df["Count"] > 1]
+with open("resp_consultation_theme_counts12345.json", 'w') as json_file:
+    json.dump(consultation_key_points, json_file)
+for i, col  in enumerate(text_columns[:1]):
+    print(col)
+    l_responses = col_to_resp_string(df, col)
+    l_r = l_responses[i]
+    check_instructions = f"The list {l_r} should contain all the points raised in {l_responses}. Is there anything in the list that did not come from the original text?"
+    print(run_llm(check_instructions, 0.5))
+
+def col_to_resp_string(df, col):
+    non_nan_entries = df[col].dropna().tolist()
+    responses = ' '.join(non_nan_entries)
+    return responses
+
+def build_key_point_instructions_1(question_to_analyse, responses_to_analyse):
+    instructions = f"The following data is from the responses of a number of organisations to a consultation question. Please list the points raised in the response as bullet points. Do not nest the bullet points. Do not include the name of the responding organisation. Do not include any additional information, introductory text or analysis. Your response should be purely a list of key points. The question being responded to is {question_to_analyse}. The responses are {responses_to_analyse}"
+    return instructions
+
+def build_key_point_reduction_instructions(key_points):
+    instructions = f"Please reduce the following list to remove any duplicated information or points that are very similar in content. Please remove the names of responding organisations. If the point expresses that the respondent did not have a view or comment please consider this to say no comment. Do not include any additional information, introductory text or analysis. Your response should be purely a list of key points. List: {key_points}"
+    return instructions
+
+def run_llm(instructions, temperature):
+    resp = client.chat.completions.create(
+        model=DEPLOYMENT_NAME,   # model = your Azure deployment name
+        messages=[{"role": "user", "content": instructions}],
+        temperature=temperature
+    )
+    return resp.choices[0].message.content
+
+def find_key_points_1(question_to_analyse, responses_to_analyse, temperature):
+    kp_instructions = build_key_point_instructions_1(question_to_analyse, responses_to_analyse)
+    key_points = run_llm(kp_instructions, temperature)
+    return key_points
+
+def find_reduced_key_points(key_points, temperature):
+    rkp_instuctions = build_key_point_reduction_instructions(key_points)
+    reduced_key_points = run_llm(rkp_instuctions, temperature)
+    return reduced_key_points
+key_points = []
+reduced_kp = []
+col_tokens = []
+kp_tokens = []
+rkp_tokens = []
+encoding = 'cl100k_base'
+temperature = 0.5
+model = SentenceTransformer('all-MiniLM-L6-v2')
+
+consultation_key_points = {}
+for col  in text_columns:
+    responses = col_to_resp_string(df, col)
+    col_tokens.append(count_tokens(responses, encoding_name=encoding))
+    col_kps = find_key_points_1(col, responses, temperature)
+    key_points.append(col_kps)
+    kp_tokens.append(count_tokens(col_kps, encoding_name=encoding))
+    col_rkps = find_reduced_key_points(col_kps, temperature)
+    reduced_kp.append(col_rkps)
+    rkp_tokens.append(count_tokens(col_rkps, encoding_name=encoding))  
+    col_pts_list = convert_string_list_to_list(col_kps)
+    col_rkps_list = convert_string_list_to_list(col_rkps)
+    
+    # Vectorise points lists
+    all_points_embedding = model.encode(col_pts_list, show_progress_bar=True)
+    reduced_points_embedding = model.encode(col_rkps_list)
+
+    theme_text_cluster = build_theme_clusters(all_points_embedding, reduced_points_embedding, col_rkps_list)
+    consultation_key_points[col] = theme_text_cluster
+with open("resp_consultation_theme_counts_20260229.json", 'w') as json_file:
+    json.dump(consultation_key_points, json_file)
+run_llm(f"Please summarise {theme_text_cluster} which is the responses to the question {text_columns[:1]} with the number of times that view was expressed", 0.5) 
+run_llm(f"Please can you extract the minority views in {theme_text_cluster} which is the responses to the question {text_columns[:1]} with the number of times that view was expressed", 0.5) 
+run_llm(f"Please can you reword the following into a reduced list of bullet points without losing any information and preserving some information about the frequency with which the themes were raised {consultation_key_points[text_columns[:1][0]]}. These are the responses to the question {text_columns[:1]} with the number of times that view was expressed", 0.5) 

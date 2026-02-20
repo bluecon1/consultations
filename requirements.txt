@@ -1,0 +1,4 @@
+python-dotenv>=1.0.1
+streamlit>=1.40.0
+pytest>=8.3.0
+azure-identity>=1.17.1

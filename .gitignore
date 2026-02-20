@@ -1,0 +1,12 @@
+.env
+.venv/
+.cache/
+.pytest_cache/
+__pycache__/
+*.pyc
+
+# Keep confidential source data out of git/GitHub by default
+data/
+
+# Local/editor noise
+.DS_Store

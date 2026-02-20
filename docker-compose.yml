@@ -1,0 +1,16 @@
+version: "3.9"
+
+services:
+  neso-consultation-ui:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: neso-consultation-ui
+    ports:
+      - "8501:8501"
+    env_file:
+      - .env
+    volumes:
+      - ./data:/app/data:ro
+      - ./.cache:/app/.cache
+    command: ["python", "-m", "main", "ui", "--host", "0.0.0.0", "--port", "8501"]
