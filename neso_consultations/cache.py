@@ -127,6 +127,19 @@ class SummaryCache:
             conn.commit()
 
 
+class NoOpSummaryCache:
+    """Cache implementation that bypasses all persistence operations."""
+
+    def make_key(self, *, approach: str, target_id: str, model: str, data_fingerprint: str) -> str:
+        return f"noop:{approach}:{target_id}:{model}:{data_fingerprint}"
+
+    def get(self, cache_key: str) -> dict[str, Any] | None:
+        return None
+
+    def set(self, cache_key: str, payload: Any) -> None:
+        return None
+
+
 def _to_serializable(value: Any) -> Any:
     """Recursively convert nested dataclasses to JSON-serialisable objects."""
     if is_dataclass(value):

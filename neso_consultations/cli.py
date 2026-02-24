@@ -6,7 +6,7 @@ import subprocess
 import sys
 from pathlib import Path
 
-from neso_consultations.cache import SummaryCache
+from neso_consultations.cache import NoOpSummaryCache, SummaryCache
 from neso_consultations.config import get_settings
 from neso_consultations.llm.factory import build_llm_provider
 from neso_consultations.models import dataclass_to_dict
@@ -26,7 +26,7 @@ def build_service(*, require_llm: bool = True) -> ConsultationService:
     settings = get_settings()
     llm_provider = build_llm_provider(settings, require_llm=require_llm)
 
-    cache = SummaryCache(settings.cache_path)
+    cache = SummaryCache(settings.cache_path) if settings.cache_enabled else NoOpSummaryCache()
     return ConsultationService(settings=settings, llm=llm_provider, cache=cache)
 
 

@@ -16,6 +16,7 @@ class Settings:
     data_path: Path
     section_mapping_path: Path
     cache_path: Path
+    cache_enabled: bool
     llm_provider: str
     openai_api_key: str
     openai_model: str
@@ -67,6 +68,7 @@ class Settings:
             data_path=data_path,
             section_mapping_path=section_mapping_path,
             cache_path=cache_path,
+            cache_enabled=(os.getenv("CACHE_ENABLED", "false").strip().lower() == "true"),
             llm_provider=os.getenv("LLM_PROVIDER", "openai").strip().lower(),
             openai_api_key=os.getenv("OPENAI_API_KEY", ""),
             openai_model=os.getenv("OPENAI_MODEL", "gpt-4.1-mini"),

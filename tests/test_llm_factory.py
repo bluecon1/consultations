@@ -13,6 +13,7 @@ def _settings(*, llm_provider: str) -> Settings:
         data_path=root / "data" / "data.csv",
         section_mapping_path=root / "data" / "survey questrion-section mapping.xlsx",
         cache_path=root / ".cache" / "test.sqlite",
+        cache_enabled=True,
         llm_provider=llm_provider,
         openai_api_key="test",
         openai_model="gpt-4.1-mini",

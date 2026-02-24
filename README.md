@@ -113,16 +113,18 @@ PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 pytest -q
 1. Copy this folder to your client workspace with same structure (`data/`, `.env`, `main.py`, `neso_consultations/`).
 2. Build a Python 3.11 environment in Azure ML (or container image) and install `requirements.txt`.
 3. Set runtime environment variables from `.env` in AML job/endpoint settings (do not hardcode secrets).
-4. For Azure OpenAI auth:
+4. Cache is disabled by default (`CACHE_ENABLED=false`) to avoid SQLite lock issues on shared infra.
+   - If you want caching later, set `CACHE_ENABLED=true` and ensure `CACHE_PATH` points to a writable location.
+5. For Azure OpenAI auth:
    - API key mode: set `AZURE_OPENAI_API_KEY`.
    - Managed identity mode: set `AZURE_OPENAI_USE_AAD=true` and grant the identity access to Azure OpenAI.
-5. Keep data local to mounted storage and set `DATA_CSV_PATH`/`SECTION_MAPPING_PATH` accordingly.
-6. For cached outputs, point `CACHE_PATH` at writable mounted storage.
-7. Smoke test in AML terminal/job:
+6. Keep data local to mounted storage and set `DATA_CSV_PATH`/`SECTION_MAPPING_PATH` accordingly.
+7. For cached outputs, point `CACHE_PATH` at writable mounted storage.
+8. Smoke test in AML terminal/job:
    - `python -m main list-orgs`
    - `python -m main summary-org --response-id <id>`
    - `python -m main summary-question --question-id <qid>`
-8. If hosting UI in Azure, containerize via the provided `Dockerfile` and expose port `8501`.
+9. If hosting UI in Azure, containerize via the provided `Dockerfile` and expose port `8501`.
 
 ## Troubleshooting
 
